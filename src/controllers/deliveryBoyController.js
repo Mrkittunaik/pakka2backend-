@@ -80,7 +80,7 @@ exports.setImage = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const fieldMap = { idProof: 'idProofUrl', license: 'licenseUrl' };
   const field = fieldMap[req.body.field] || 'avatar';
-  const d = await DeliveryBoy.findByIdAndUpdate(req.params.id, { [field]: `/uploads/${req.file.filename}` }, { new: true });
+  const d = await DeliveryBoy.findByIdAndUpdate(req.params.id, { [field]: req.file.path }, { new: true });
   if (!d) return res.status(404).json({ error: 'Not found' });
   emit.driverUpdated(d);
   res.json(d);
