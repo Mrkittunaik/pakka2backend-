@@ -8,6 +8,10 @@ const deliveryBoySchema = new mongoose.Schema({
   zone: { type: String, default: '' },
   vehicle: { type: String, default: '' },
   status: { type: String, enum: ['pending', 'approved', 'suspended', 'rejected'], default: 'pending' },
+  verified: { type: Boolean, default: false },   // admin has checked documents
+  avatar: { type: String, default: '' },         // /uploads/<file>
+  idProofUrl: { type: String, default: '' },     // /uploads/<file> ID card
+  licenseUrl: { type: String, default: '' },     // /uploads/<file> driving license
   deliveries: { type: Number, default: 0 },
   rating: { type: Number, default: null },
   liveLocation: {
