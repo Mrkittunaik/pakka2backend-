@@ -41,6 +41,19 @@ exports.userStatusChanged = (user) => safe(() => {
   getIO().to(`user:${user._id}`).emit('user:status', user); // e.g. blocked mid-session
 });
 
+exports.userUpdated = (user) => safe(() => {
+  getIO().to('admins').emit('user:updated', user);
+  getIO().to(`user:${user._id}`).emit('user:updated', user); // profile/verify/avatar changed
+});
+
+exports.userDeleted = (userId) => safe(() => {
+  getIO().to('admins').emit('user:deleted', { _id: userId });
+});
+
+exports.driverDeleted = (driverId) => safe(() => {
+  getIO().to('admins').emit('driver:deleted', { _id: driverId });
+});
+
 exports.subscriptionChanged = (sub) => safe(() => {
   getIO().to('admins').emit('subscription:changed', sub);
   getIO().to(`user:${sub.customer}`).emit('subscription:changed', sub);
