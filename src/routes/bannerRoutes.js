@@ -8,7 +8,7 @@ router.get('/', ctrl.list); // public: active banners for customer app home scre
 router.get('/all', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.listAll);
 router.post('/upload-image', requireAuth, requireRole('owner', 'admin', 'manager'), upload.single('image'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  res.json({ url: `/uploads/${req.file.filename}` });
+  res.json({ url: req.file.path });
 });
 router.post('/', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.create);
 router.put('/:id', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.update);
