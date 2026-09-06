@@ -8,16 +8,20 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-app.use(helmet());
+app.use(helmet({
+  // Default helmet sets Cross-Origin-Resource-Policy: same-origin, which
+  // blocks browsers from using responses fetched from a different origin
+  // (admin/webapp/delivery apps are all on separate pages.dev domains from
+  // this API) even when CORS headers are correct. Relax it so the
+  // whitelisted frontends above can actually consume the responses.
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false
-});
-app.use('/api', apiLimiter);
-
+// CORS must run BEFORE the rate limiter (and before any route). If the
+// limiter runs first, a throttled/blocked OPTIONS preflight never gets
+// CORS headers attached, so the browser reports it as a CORS failure
+// even though the real cause is unrelated - this was hiding the actual
+// error behind a misleading "CORS policy" message for every endpoint.
 const allowedOrigins = [
   'https://milkadmin.pages.dev',
   'https://milkwebapp.pages.dev',
@@ -32,6 +36,15 @@ app.use(cors({
   },
   credentials: true
 }));
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/api', apiLimiter);
+
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan('dev'));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
