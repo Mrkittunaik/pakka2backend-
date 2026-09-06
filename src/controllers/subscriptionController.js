@@ -5,6 +5,17 @@ const { checkCutoff, dateKey } = require('../utils/subscriptionRules');
 // customer: subscribe to a plan or a custom weekday schedule
 exports.create = async (req, res) => {
   const { plan, custom, address, slot, startDate } = req.body;
+  if (!address) return res.status(400).json({ error: 'address is required' });
+  if (!startDate) return res.status(400).json({ error: 'startDate is required' });
+  if (!plan && !custom) return res.status(400).json({ error: 'Either a plan or a custom schedule is required' });
+
+  if (plan) {
+    const Plan = require('../models/Plan');
+    const planDoc = await Plan.findById(plan);
+    if (!planDoc) return res.status(404).json({ error: 'Selected plan does not exist' });
+    if (!planDoc.active) return res.status(400).json({ error: 'Selected plan is no longer available' });
+  }
+
   const sub = await Subscription.create({
     customer: req.auth.id,
     plan: plan || null,
