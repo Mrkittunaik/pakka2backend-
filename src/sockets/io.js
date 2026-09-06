@@ -32,11 +32,19 @@ function init(httpServer) {
     cors: { origin: allowedOrigins, credentials: true }
   });
 
-  // Auth handshake: client connects with `io(url, { auth: { token } })`
+  // Auth handshake: client connects with `io(url, { auth: { token } })`.
+  // A token is required to join role-specific rooms (orders, driver jobs,
+  // admin dashboard), but guests browsing the storefront are still allowed
+  // to connect with no token at all - they only get the public 'catalog'
+  // room below, so product/price/banner updates reach everyone live,
+  // logged in or not.
   io.use((socket, next) => {
+    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    if (!token) {
+      socket.auth = null; // guest
+      return next();
+    }
     try {
-      const token = socket.handshake.auth?.token || socket.handshake.query?.token;
-      if (!token) return next(new Error('Missing auth token'));
       socket.auth = verifyToken(token);
       next();
     } catch (err) {
@@ -45,11 +53,14 @@ function init(httpServer) {
   });
 
   io.on('connection', (socket) => {
+    socket.join('catalog'); // everyone, including guests: product/coupon/banner/plan/category/zone updates
+
+    if (!socket.auth) return; // guest: no further rooms, no presence tracking
+
     const { id, role } = socket.auth;
     const bucket = roleBucket(role);
 
     online[bucket].add(socket.id);
-    socket.join('catalog'); // everyone: product/coupon/banner/plan/category/zone updates
 
     if (role === 'customer') {
       socket.join(`user:${id}`);
