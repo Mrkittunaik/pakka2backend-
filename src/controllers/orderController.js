@@ -114,7 +114,7 @@ exports.getOne = async (req, res) => {
 // PATCH /api/orders/:id/status  (admin or delivery boy moving it through the pipeline)
 exports.updateStatus = async (req, res) => {
   const { status } = req.body;
-  const allowed = ['placed', 'preparing', 'out', 'delivered', 'cancelled'];
+  const allowed = ['placed', 'preparing', 'pending_acceptance', 'out', 'delivered', 'cancelled'];
   if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
   const order = await Order.findById(req.params.id);
@@ -137,7 +137,7 @@ exports.updateStatus = async (req, res) => {
   res.json(order);
 };
 
-// PATCH /api/orders/:id/assign  { deliveryBoyId }  (admin only)
+// PATCH /api/orders/:id/assign  { deliveryBoyId }  (admin only - direct manual assign, no accept/reject)
 exports.assign = async (req, res) => {
   const { deliveryBoyId } = req.body;
   const order = await Order.findByIdAndUpdate(
@@ -148,4 +148,94 @@ exports.assign = async (req, res) => {
   if (!order) return res.status(404).json({ error: 'Order not found' });
   emit.orderAssigned(order); // -> pushes the job straight into the delivery boy's live queue
   res.json(order);
+};
+
+// PATCH /api/orders/:id/offer  (admin, or called by a scheduler/cron)
+// Broadcasts the order to every approved delivery boy near the drop location.
+// First one to accept gets it; everyone else's app is told "already taken".
+exports.offer = async (req, res) => {
+  const { radiusKm } = req.body || {};
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  if (!['placed', 'preparing'].includes(order.status)) {
+    return res.status(400).json({ error: `Cannot offer an order in status "${order.status}"` });
+  }
+
+  const DeliveryBoy = require('../models/DeliveryBoy');
+  const { findNearbyDeliveryBoys } = require('../utils/geo');
+  const nearby = await findNearbyDeliveryBoys(DeliveryBoy, order.lat, order.lng, radiusKm || 8);
+
+  if (!nearby.length) {
+    emit.orderNeedsManualAssign(order);
+    return res.status(200).json({ order, offeredTo: [], message: 'No approved delivery boys available - admin must assign manually' });
+  }
+
+  order.status = 'pending_acceptance';
+  order.offeredTo = nearby.map(d => d._id);
+  order.offeredAt = new Date();
+  order.rejectedBy = [];
+  await order.save();
+
+  emit.orderOffered(order, order.offeredTo.map(String));
+  res.json(order);
+};
+
+// PATCH /api/orders/:id/respond  { action: 'accept' | 'reject' }  (delivery boy)
+// Race-safe: uses an atomic findOneAndUpdate guarded on status=pending_acceptance
+// so if two drivers tap Accept at the same instant, only the first write wins -
+// the second gets back null and a clean "already taken" response, never a
+// double-assigned order.
+exports.respond = async (req, res) => {
+  const { action } = req.body;
+  const driverId = req.auth.id;
+  if (!['accept', 'reject'].includes(action)) {
+    return res.status(400).json({ error: 'action must be "accept" or "reject"' });
+  }
+
+  const existing = await Order.findById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Order not found' });
+  if (existing.status !== 'pending_acceptance') {
+    return res.status(409).json({ error: 'This order is no longer available', status: existing.status });
+  }
+  if (!existing.offeredTo.some(id => String(id) === String(driverId))) {
+    return res.status(403).json({ error: 'This order was not offered to you' });
+  }
+
+  if (action === 'reject') {
+    existing.rejectedBy.push(driverId);
+    await existing.save();
+    emit.orderRejectedByDriver(existing, driverId);
+
+    // If everyone offered has now rejected, hand it back to admin.
+    const allRejected = existing.offeredTo.every(id =>
+      existing.rejectedBy.some(r => String(r) === String(id))
+    );
+    if (allRejected) {
+      existing.status = 'placed';
+      await existing.save();
+      emit.orderNeedsManualAssign(existing);
+    }
+    return res.json({ status: 'rejected', order: existing });
+  }
+
+  // action === 'accept' - atomic compare-and-swap on status so only one write lands
+  const won = await Order.findOneAndUpdate(
+    { _id: req.params.id, status: 'pending_acceptance' },
+    { status: 'out', assigned: driverId, acceptedAt: new Date() },
+    { new: true }
+  );
+
+  if (!won) {
+    // Someone else's accept landed first between our read above and now.
+    return res.status(409).json({ error: 'Order already accepted by another delivery partner' });
+  }
+
+  const others = won.offeredTo.map(String).filter(id => id !== String(driverId));
+  emit.orderTakenByOther(won, others); // pull the offer card off everyone else's screen instantly
+  emit.orderAssigned(won);             // -> customer sees rider assigned, admin board updates
+  emit.orderStatusChanged(won);
+  const { pushDashboardStats } = require('./dashboardController');
+  pushDashboardStats();
+
+  res.json({ status: 'accepted', order: won });
 };
