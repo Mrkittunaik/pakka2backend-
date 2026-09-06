@@ -26,6 +26,27 @@ async function createOrderWithRetry(data, attempts = 3) {
   }
 }
 
+// Shared by exports.create (auto-broadcast) and exports.offer (manual re-broadcast
+// from the admin dashboard, e.g. after everyone rejected the first round).
+async function broadcastToNearbyDrivers(order) {
+  const DeliveryBoy = require('../models/DeliveryBoy');
+  const { findNearbyDeliveryBoys } = require('../utils/geo');
+  const nearby = await findNearbyDeliveryBoys(DeliveryBoy, order.lat, order.lng, 8);
+
+  if (!nearby.length) {
+    emit.orderNeedsManualAssign(order);
+    return order;
+  }
+
+  order.status = 'pending_acceptance';
+  order.offeredTo = nearby.map(d => d._id);
+  order.offeredAt = new Date();
+  order.rejectedBy = [];
+  await order.save();
+  emit.orderOffered(order, order.offeredTo.map(String));
+  return order;
+}
+
 // POST /api/orders  (customer app - matches "Full order payload ready for POST /api/orders")
 exports.create = async (req, res) => {
   const userId = req.auth.id;
@@ -88,6 +109,12 @@ exports.create = async (req, res) => {
   await User.findByIdAndUpdate(user._id, { $inc: { ordersCount: 1 }, status: 'active' });
 
   emit.orderCreated(order); // -> admin dashboard/order list updates live, no refresh needed
+
+  // Auto-broadcast to nearby delivery boys immediately - no admin click needed.
+  // If nobody's nearby, broadcastToNearbyDrivers() falls back to notifying
+  // admin that this one needs a manual assign instead of silently stalling.
+  await broadcastToNearbyDrivers(order);
+
   pushDashboardStats();
   res.status(201).json(order);
 };
@@ -150,33 +177,16 @@ exports.assign = async (req, res) => {
   res.json(order);
 };
 
-// PATCH /api/orders/:id/offer  (admin, or called by a scheduler/cron)
-// Broadcasts the order to every approved delivery boy near the drop location.
-// First one to accept gets it; everyone else's app is told "already taken".
+// PATCH /api/orders/:id/offer  (admin - manual re-broadcast, e.g. after everyone
+// rejected the first round, or to retry a manual-assign-needed order)
 exports.offer = async (req, res) => {
-  const { radiusKm } = req.body || {};
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   if (!['placed', 'preparing'].includes(order.status)) {
     return res.status(400).json({ error: `Cannot offer an order in status "${order.status}"` });
   }
 
-  const DeliveryBoy = require('../models/DeliveryBoy');
-  const { findNearbyDeliveryBoys } = require('../utils/geo');
-  const nearby = await findNearbyDeliveryBoys(DeliveryBoy, order.lat, order.lng, radiusKm || 8);
-
-  if (!nearby.length) {
-    emit.orderNeedsManualAssign(order);
-    return res.status(200).json({ order, offeredTo: [], message: 'No approved delivery boys available - admin must assign manually' });
-  }
-
-  order.status = 'pending_acceptance';
-  order.offeredTo = nearby.map(d => d._id);
-  order.offeredAt = new Date();
-  order.rejectedBy = [];
-  await order.save();
-
-  emit.orderOffered(order, order.offeredTo.map(String));
+  await broadcastToNearbyDrivers(order);
   res.json(order);
 };
 
@@ -206,14 +216,15 @@ exports.respond = async (req, res) => {
     await existing.save();
     emit.orderRejectedByDriver(existing, driverId);
 
-    // If everyone offered has now rejected, hand it back to admin.
+    // If everyone offered has now rejected, try one more broadcast round
+    // (radius/pool may have changed) before falling back to admin.
     const allRejected = existing.offeredTo.every(id =>
       existing.rejectedBy.some(r => String(r) === String(id))
     );
     if (allRejected) {
       existing.status = 'placed';
       await existing.save();
-      emit.orderNeedsManualAssign(existing);
+      await broadcastToNearbyDrivers(existing);
     }
     return res.json({ status: 'rejected', order: existing });
   }
@@ -239,3 +250,5 @@ exports.respond = async (req, res) => {
 
   res.json({ status: 'accepted', order: won });
 };
+
+module.exports.broadcastToNearbyDrivers = broadcastToNearbyDrivers;
