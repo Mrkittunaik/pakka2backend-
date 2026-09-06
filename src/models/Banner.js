@@ -1,7 +1,10 @@
 const mongoose = require('mongoose');
 
 const bannerSchema = new mongoose.Schema({
-  title: { type: String, required: true },
+  // Not required: an image-type banner is complete with just an image,
+  // no title needed. Controller/frontend still send a harmless default
+  // ('Banner') when both are empty, purely for admin-list display.
+  title: { type: String, default: 'Banner' },
   subtitle: { type: String, default: '' },
   color: { type: String, default: '#FDC202' }, // fallback background color if no image is set
   image: { type: String, default: null },
