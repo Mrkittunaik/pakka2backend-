@@ -26,6 +26,29 @@ exports.orderAssigned = (order) => safe(() => {
   if (order.assigned) getIO().to(`driver:${order.assigned}`).emit('order:assigned', order);
 });
 
+// Order broadcast to nearby delivery boys - "new job available, accept or reject"
+exports.orderOffered = (order, driverIds) => safe(() => {
+  const io = getIO();
+  driverIds.forEach(id => io.to(`driver:${id}`).emit('order:offered', order));
+  io.to('admins').emit('order:offered', order);
+});
+
+// Tells every OTHER driver it was offered to that someone already accepted,
+// so their UI can pull the card instantly instead of them tapping into a 409.
+exports.orderTakenByOther = (order, remainingDriverIds) => safe(() => {
+  const io = getIO();
+  remainingDriverIds.forEach(id => io.to(`driver:${id}`).emit('order:takenByOther', { _id: order._id }));
+});
+
+exports.orderRejectedByDriver = (order, driverId) => safe(() => {
+  getIO().to('admins').emit('order:rejectedByDriver', { orderId: order._id, driverId });
+});
+
+// All eligible drivers rejected (or none were nearby) - admin needs to manually assign
+exports.orderNeedsManualAssign = (order) => safe(() => {
+  getIO().to('admins').emit('order:needsManualAssign', order);
+});
+
 exports.driverStatusChanged = (driver) => safe(() => {
   getIO().to('admins').emit('driver:status', driver);
   getIO().to(`driver:${driver._id}`).emit('driver:status', driver); // e.g. account approved/suspended
