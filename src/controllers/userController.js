@@ -71,7 +71,7 @@ exports.remove = async (req, res) => {
 exports.setImage = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const field = req.body.field === 'idProof' ? 'idProofUrl' : 'avatar';
-  const u = await User.findByIdAndUpdate(req.params.id, { [field]: `/uploads/${req.file.filename}` }, { new: true });
+  const u = await User.findByIdAndUpdate(req.params.id, { [field]: req.file.path }, { new: true });
   if (!u) return res.status(404).json({ error: 'Not found' });
   emit.userUpdated(u);
   res.json(u);
