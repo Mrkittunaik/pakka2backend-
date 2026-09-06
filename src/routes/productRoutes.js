@@ -12,7 +12,7 @@ router.delete('/:id', requireAuth, requireRole('owner', 'admin'), ctrl.remove);
 router.patch('/:id/stock', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.adjustStock);
 router.post('/upload-image', requireAuth, requireRole('owner', 'admin', 'manager'), upload.single('image'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  res.json({ url: `/uploads/${req.file.filename}` });
+  res.json({ url: req.file.path });
 });
 
 module.exports = router;
