@@ -56,3 +56,32 @@ exports.changePassword = async (req, res) => {
   if (!d) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 };
+
+// admin: mark documents/identity as checked and verified
+exports.setVerified = async (req, res) => {
+  const { verified } = req.body;
+  const d = await DeliveryBoy.findByIdAndUpdate(req.params.id, { verified: !!verified }, { new: true });
+  if (!d) return res.status(404).json({ error: 'Not found' });
+  emit.driverUpdated(d);
+  res.json(d);
+};
+
+// admin: permanently remove a delivery boy account (rejected applicants, offboarded riders)
+exports.remove = async (req, res) => {
+  const d = await DeliveryBoy.findByIdAndDelete(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Not found' });
+  emit.driverDeleted(d._id);
+  res.json({ ok: true });
+};
+
+// admin (during review) or delivery app (self-upload at registration): attach
+// avatar / ID proof / license image files
+exports.setImage = async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const fieldMap = { idProof: 'idProofUrl', license: 'licenseUrl' };
+  const field = fieldMap[req.body.field] || 'avatar';
+  const d = await DeliveryBoy.findByIdAndUpdate(req.params.id, { [field]: `/uploads/${req.file.filename}` }, { new: true });
+  if (!d) return res.status(404).json({ error: 'Not found' });
+  emit.driverUpdated(d);
+  res.json(d);
+};
