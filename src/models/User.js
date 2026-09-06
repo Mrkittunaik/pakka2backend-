@@ -16,6 +16,9 @@ const userSchema = new mongoose.Schema({
   googleId: { type: String, default: null },
   addresses: [addressSchema],
   status: { type: String, enum: ['new', 'active', 'blocked'], default: 'new' },
+  verified: { type: Boolean, default: false }, // admin has confirmed identity/KYC
+  avatar: { type: String, default: '' },       // /uploads/<file> profile photo
+  idProofUrl: { type: String, default: '' },   // /uploads/<file> ID card image, if collected
   ordersCount: { type: Number, default: 0 },
   joinedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
