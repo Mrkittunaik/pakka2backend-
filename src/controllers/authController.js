@@ -12,6 +12,7 @@ const { signToken } = require('../utils/token');
 exports.sendOtp = async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'phone is required' });
+  if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'phone must be exactly 10 digits' });
 
   const code = generateCode();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
@@ -64,6 +65,10 @@ exports.googleAuth = async (req, res) => {
 exports.bindPhone = async (req, res) => {
   const { googleId, phone } = req.body;
   if (!googleId || !phone) return res.status(400).json({ error: 'googleId and phone are required' });
+  if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'phone must be exactly 10 digits' });
+
+  const takenByOther = await User.findOne({ phone, googleId: { $ne: googleId } });
+  if (takenByOther) return res.status(409).json({ error: 'This phone number is already linked to another account' });
 
   const user = await User.findOneAndUpdate({ googleId }, { phone }, { new: true });
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -106,6 +111,8 @@ exports.deliveryLogin = async (req, res) => {
 exports.deliveryRegister = async (req, res) => {
   const { name, phone, password, area, vehicle } = req.body;
   if (!name || !phone || !password) return res.status(400).json({ error: 'name, phone, password are required' });
+  if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'phone must be exactly 10 digits' });
+  if (password.length < 6) return res.status(400).json({ error: 'password must be at least 6 characters' });
 
   const existing = await DeliveryBoy.findOne({ phone });
   if (existing) return res.status(409).json({ error: 'Phone already registered' });
