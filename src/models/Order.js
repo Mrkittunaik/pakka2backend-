@@ -20,10 +20,19 @@ const orderSchema = new mongoose.Schema({
   discount: { type: Number, default: 0 },
   status: {
     type: String,
-    enum: ['placed', 'preparing', 'out', 'delivered', 'cancelled'],
+    // pending_acceptance: broadcast to nearby delivery boys, awaiting first accept
+    // out: accepted by a delivery boy, en route
+    enum: ['placed', 'preparing', 'pending_acceptance', 'out', 'delivered', 'cancelled'],
     default: 'placed'
   },
   assigned: { type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryBoy', default: null },
+  // Delivery boys the order was broadcast to when offered (audit trail + lets us
+  // tell late responders "already taken" instead of a confusing generic error).
+  offeredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryBoy' }],
+  offeredAt: { type: Date, default: null },
+  rejectedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryBoy' }],
+  acceptedAt: { type: Date, default: null },
+  slot: { type: String, enum: ['morning', 'evening', null], default: null }, // per-order delivery slot (one-off orders)
   couponCode: { type: String, default: null },
   paymentStatus: { type: String, enum: ['pending', 'paid', 'failed', 'cod'], default: 'pending' },
   paymentOrderId: { type: String, default: null }, // razorpay order id
