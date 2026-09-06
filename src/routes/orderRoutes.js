@@ -8,5 +8,7 @@ router.get('/', requireAuth, ctrl.list); // admin sees all, customer sees own, d
 router.get('/:id', requireAuth, ctrl.getOne);
 router.patch('/:id/status', requireAuth, requireRole('owner', 'admin', 'manager', 'delivery'), ctrl.updateStatus);
 router.patch('/:id/assign', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.assign);
+router.patch('/:id/offer', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.offer);
+router.patch('/:id/respond', requireAuth, requireRole('delivery'), ctrl.respond);
 
 module.exports = router;
