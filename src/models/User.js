@@ -11,7 +11,17 @@ const addressSchema = new mongoose.Schema({
 
 const userSchema = new mongoose.Schema({
   name: { type: String, default: '' },
-  phone: { type: String, required: true, unique: true, index: true },
+  phone: {
+    type: String,
+    default: null,
+    unique: true,
+    sparse: true, // lets multiple Google-signup users have phone:null before they bind one
+    index: true,
+    validate: {
+      validator: (v) => v === null || /^\d{10}$/.test(v),
+      message: 'phone must be exactly 10 digits'
+    }
+  },
   email: { type: String, default: null },
   googleId: { type: String, default: null },
   addresses: [addressSchema],
