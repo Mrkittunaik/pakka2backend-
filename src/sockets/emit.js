@@ -49,6 +49,17 @@ exports.orderNeedsManualAssign = (order) => safe(() => {
   getIO().to('admins').emit('order:needsManualAssign', order);
 });
 
+// Driver GPS ping via REST fallback (see deliveryBoyController.updateMyLocation).
+// Mirrors the socket 'driver:location' handler in sockets/io.js exactly, so the
+// customer's track screen gets the same live pings either way.
+exports.driverLocation = ({ driverId, lat, lng, orderId }) => safe(() => {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return;
+  const io = getIO();
+  const payload = { driverId, lat, lng, at: Date.now() };
+  io.to('admins').emit('driver:location', payload);
+  if (orderId) io.to(`order:${orderId}`).emit('driver:location', payload);
+});
+
 exports.driverStatusChanged = (driver) => safe(() => {
   getIO().to('admins').emit('driver:status', driver);
   getIO().to(`driver:${driver._id}`).emit('driver:status', driver); // e.g. account approved/suspended
