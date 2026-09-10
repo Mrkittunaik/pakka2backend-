@@ -24,16 +24,20 @@ exports.setStatus = async (req, res) => {
   res.json(d);
 };
 
-// PATCH /api/delivery-boys/me/location  { lat, lng } (delivery app, live tracking - REST fallback;
-// the socket 'driver:location' event is the low-latency path used while an order is "out")
+// PATCH /api/delivery-boys/me/location  { lat, lng, orderId? } (delivery app, live tracking - REST fallback;
+// the socket 'driver:location' event is the low-latency path used while an order is "out".
+// orderId is optional and only needed while actively delivering - mirrors the socket handler
+// in sockets/io.js so the customer's track screen (which joins `order:${orderId}`) gets the
+// same live pings whether the rider's app is using sockets or falling back to REST.)
 exports.updateMyLocation = async (req, res) => {
-  const { lat, lng } = req.body;
+  const { lat, lng, orderId } = req.body;
   const d = await DeliveryBoy.findByIdAndUpdate(
     req.auth.id,
     { liveLocation: { lat, lng, updatedAt: new Date() } },
     { new: true }
   );
   emit.driverUpdated(d);
+  emit.driverLocation({ driverId: req.auth.id, lat, lng, orderId });
   res.json(d);
 };
 
