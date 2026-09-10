@@ -1,10 +1,16 @@
 const bcrypt = require('bcryptjs');
+const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const Staff = require('../models/Staff');
 const DeliveryBoy = require('../models/DeliveryBoy');
 const Otp = require('../models/Otp');
 const { generateCode, sendSms } = require('../utils/otp');
 const { signToken } = require('../utils/token');
+
+// GOOGLE_CLIENT_ID must match window.PD_GOOGLE_CLIENT_ID on the frontend -
+// it's the same OAuth Client ID, just used here to check the token's
+// "audience" so we only accept tokens issued for OUR app.
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 /* ---------------- Customer app: phone + OTP ---------------- */
 
@@ -46,31 +52,60 @@ exports.verifyOtp = async (req, res) => {
 exports.googleAuth = async (req, res) => {
   const { credential } = req.body;
   if (!credential) return res.status(400).json({ error: 'credential is required' });
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ error: 'Server misconfigured: GOOGLE_CLIENT_ID is not set' });
+  }
 
-  // TODO: verify `credential` against Google using google-auth-library and
-  // GOOGLE_CLIENT_ID. For now we trust a decoded payload passed by the client
-  // only in dev; wire up real verification before going to production.
-  const { googleId, email, name } = req.body;
-  if (!googleId) return res.status(400).json({ error: 'googleId is required (dev stub)' });
+  // Real server-side verification: this checks the token's signature against
+  // Google's public keys, its expiry, and that it was issued for OUR
+  // GOOGLE_CLIENT_ID (the "audience"). If any of that fails, verifyIdToken
+  // throws, and the client-sent value is never trusted directly.
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid Google credential' });
+  }
+
+  const googleId = payload.sub;   // stable unique Google user id
+  const email = payload.email;
+  const name = payload.name;
 
   let user = await User.findOne({ googleId });
   if (!user) {
-    user = await User.create({ googleId, email, name, phone: null, status: 'new' });
+    // A user may already exist with this email from a previous phone-only
+    // signup - link the accounts instead of creating a duplicate.
+    user = await User.findOne({ email });
+    if (user) {
+      user.googleId = googleId;
+      if (!user.name) user.name = name;
+      await user.save();
+    } else {
+      user = await User.create({ googleId, email, name, phone: null, status: 'new' });
+    }
   }
+
   const token = signToken({ id: user._id, role: 'customer' });
   res.json({ ok: true, token, user, needsPhone: !user.phone });
 };
 
-// POST /api/auth/bind-phone { googleId, email, phone } - attach phone to a Google-created account
+// POST /api/auth/bind-phone { phone } - attach phone to the CURRENTLY LOGGED IN
+// user, identified by their JWT (from requireAuth), not by a client-sent id.
+// The googleAuth call already returns a token even when needsPhone is true,
+// so the frontend has a valid Authorization header to send here.
 exports.bindPhone = async (req, res) => {
-  const { googleId, phone } = req.body;
-  if (!googleId || !phone) return res.status(400).json({ error: 'googleId and phone are required' });
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: 'phone is required' });
   if (!/^\d{10}$/.test(phone)) return res.status(400).json({ error: 'phone must be exactly 10 digits' });
 
-  const takenByOther = await User.findOne({ phone, googleId: { $ne: googleId } });
+  const takenByOther = await User.findOne({ phone, _id: { $ne: req.auth.id } });
   if (takenByOther) return res.status(409).json({ error: 'This phone number is already linked to another account' });
 
-  const user = await User.findOneAndUpdate({ googleId }, { phone }, { new: true });
+  const user = await User.findByIdAndUpdate(req.auth.id, { phone }, { new: true });
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({ ok: true, user });
 };
