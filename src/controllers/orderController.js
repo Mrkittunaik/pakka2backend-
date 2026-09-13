@@ -50,7 +50,7 @@ async function broadcastToNearbyDrivers(order) {
 // POST /api/orders  (customer app - matches "Full order payload ready for POST /api/orders")
 exports.create = async (req, res) => {
   const userId = req.auth.id;
-  const { items, address, couponCode, paymentStatus, paymentRef } = req.body;
+  const { items, address, couponCode, paymentStatus, paymentRef, locationAccuracy } = req.body;
   let { lat, lng } = req.body;
   if (!items || !items.length) return res.status(400).json({ error: 'items are required' });
 
@@ -94,6 +94,7 @@ exports.create = async (req, res) => {
     phone: user.phone,
     address,
     lat, lng,
+    locationAccuracy: typeof locationAccuracy === 'number' ? locationAccuracy : undefined,
     items: resolvedItems,
     total,
     status: 'placed',
