@@ -15,6 +15,7 @@ const orderSchema = new mongoose.Schema({
   address: String,
   lat: Number,
   lng: Number,
+  locationAccuracy: Number, // meters - GPS accuracy reported by the browser at order time (lower = more exact)
   items: [orderItemSchema],
   total: { type: Number, required: true },
   discount: { type: Number, default: 0 },
