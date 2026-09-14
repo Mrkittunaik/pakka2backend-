@@ -26,6 +26,52 @@ async function createOrderWithRetry(data, attempts = 3) {
   }
 }
 
+// Server-trusted pricing: re-reads each product's live price/stock from the
+// DB and applies any coupon, never trusting client-supplied prices. Shared
+// by exports.create (COD/already-paid orders) AND gatewayController
+// .createOrder (the Razorpay pre-payment step) so the amount a customer is
+// actually CHARGED can never drift from the amount their order is placed
+// for - both paths compute the total exactly the same way.
+async function priceCart(items, couponCode) {
+  if (!items || !items.length) {
+    const err = new Error('items are required');
+    err.status = 400;
+    throw err;
+  }
+
+  let total = 0;
+  const resolvedItems = [];
+  for (const it of items) {
+    const product = await Product.findById(it.productId);
+    if (!product || !product.available) {
+      const err = new Error(`Product unavailable: ${it.productId}`);
+      err.status = 400;
+      throw err;
+    }
+    if (product.stock < it.qty) {
+      const err = new Error(`Insufficient stock for ${product.name}`);
+      err.status = 400;
+      throw err;
+    }
+    total += product.price * it.qty;
+    resolvedItems.push({ product: product._id, name: `${product.name} ${product.unit}`, qty: it.qty, price: product.price });
+  }
+
+  let discount = 0;
+  let appliedCoupon = null;
+  if (couponCode) {
+    const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), active: true });
+    if (coupon && coupon.expiry > new Date() && total >= coupon.minOrder) {
+      discount = coupon.type === 'flat' ? coupon.value : Math.round((coupon.value / 100) * total);
+      if (coupon.maxDiscount) discount = Math.min(discount, coupon.maxDiscount);
+      appliedCoupon = coupon;
+    }
+  }
+  total = Math.max(0, total - discount);
+
+  return { resolvedItems, total, discount, appliedCoupon };
+}
+
 // Shared by exports.create (auto-broadcast) and exports.offer (manual re-broadcast
 // from the admin dashboard, e.g. after everyone rejected the first round).
 async function broadcastToNearbyDrivers(order) {
@@ -50,7 +96,7 @@ async function broadcastToNearbyDrivers(order) {
 // POST /api/orders  (customer app - matches "Full order payload ready for POST /api/orders")
 exports.create = async (req, res) => {
   const userId = req.auth.id;
-  const { items, address, couponCode, paymentStatus, paymentRef, locationAccuracy } = req.body;
+  const { items, address, couponCode, paymentStatus, paymentRef, paymentOrderId, locationAccuracy } = req.body;
   let { lat, lng } = req.body;
   if (!items || !items.length) return res.status(400).json({ error: 'items are required' });
 
@@ -65,28 +111,23 @@ exports.create = async (req, res) => {
     if (match) { lat = match.lat; lng = match.lng; }
   }
 
-  // Price + stock check server-side (never trust client prices)
-  let total = 0;
-  const resolvedItems = [];
-  for (const it of items) {
-    const product = await Product.findById(it.productId);
-    if (!product || !product.available) return res.status(400).json({ error: `Product unavailable: ${it.productId}` });
-    if (product.stock < it.qty) return res.status(400).json({ error: `Insufficient stock for ${product.name}` });
-    total += product.price * it.qty;
-    resolvedItems.push({ product: product._id, name: `${product.name} ${product.unit}`, qty: it.qty, price: product.price });
+  // For a Razorpay-paid order, the frontend has already gone through
+  // gatewayController.createOrder -> gatewayController.verify before
+  // calling this endpoint, so the payment signature is already verified.
+  // We still re-price the cart from scratch here (never trust client
+  // prices/total for what gets recorded), but skip re-verifying payment -
+  // that already happened. paymentOrderId links this Order back to the
+  // Razorpay order for the admin Payment Manager / refunds.
+  let resolvedItems, total, discount, appliedCoupon;
+  try {
+    ({ resolvedItems, total, discount, appliedCoupon } = await priceCart(items, couponCode));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
   }
-
-  let discount = 0;
-  if (couponCode) {
-    const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), active: true });
-    if (coupon && coupon.expiry > new Date() && total >= coupon.minOrder) {
-      discount = coupon.type === 'flat' ? coupon.value : Math.round((coupon.value / 100) * total);
-      if (coupon.maxDiscount) discount = Math.min(discount, coupon.maxDiscount);
-      coupon.usedCount += 1;
-      await coupon.save();
-    }
+  if (appliedCoupon) {
+    appliedCoupon.usedCount += 1;
+    await appliedCoupon.save();
   }
-  total = Math.max(0, total - discount);
 
   const order = await createOrderWithRetry({
     customer: user._id,
@@ -101,6 +142,7 @@ exports.create = async (req, res) => {
     couponCode: couponCode || null,
     discount,
     paymentStatus: paymentStatus || 'cod',
+    paymentOrderId: paymentOrderId || null,
     paymentRef: paymentRef || null
   });
 
@@ -108,6 +150,20 @@ exports.create = async (req, res) => {
     await Product.findByIdAndUpdate(it.product, { $inc: { stock: -it.qty, sold: it.qty } });
   }
   await User.findByIdAndUpdate(user._id, { $inc: { ordersCount: 1 }, status: 'active' });
+
+  // If this order was paid via Razorpay, gatewayController.verify already
+  // created a Payment ledger row (amount unknown at that point - the cart
+  // hadn't been priced into a real Order yet). Link it to this order now
+  // and fill in the real amount, rather than leaving a 0-amount ledger row.
+  if (paymentRef && paymentStatus === 'paid') {
+    const Payment = require('../models/Payment');
+    const linked = await Payment.findOneAndUpdate(
+      { ref: paymentRef },
+      { order: order._id, customer: user._id, amount: total },
+      { new: true }
+    );
+    if (linked) emit.paymentChanged(linked);
+  }
 
   emit.orderCreated(order); // -> admin dashboard/order list updates live, no refresh needed
 
@@ -253,3 +309,4 @@ exports.respond = async (req, res) => {
 };
 
 module.exports.broadcastToNearbyDrivers = broadcastToNearbyDrivers;
+module.exports.priceCart = priceCart;
