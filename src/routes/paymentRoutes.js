@@ -13,4 +13,8 @@ router.patch('/:id/status', requireAuth, requireRole('owner', 'admin', 'manager'
 router.post('/create-order', requireAuth, requireRole('customer'), gateway.createOrder);
 router.post('/verify', requireAuth, requireRole('customer'), gateway.verify);
 
+// NOTE: POST /api/payments/webhook is NOT registered here - it's mounted
+// directly in app.js, BEFORE the global express.json() parser, because its
+// Razorpay signature check needs the raw request body (see app.js comment).
+
 module.exports = router;
