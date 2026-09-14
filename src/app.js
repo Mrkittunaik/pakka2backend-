@@ -45,6 +45,12 @@ const apiLimiter = rateLimit({
 });
 app.use('/api', apiLimiter);
 
+// Razorpay webhook MUST be mounted before express.json() below and parsed
+// with express.raw() - its HMAC signature is computed over the exact raw
+// request bytes Razorpay sent, and re-serializing through JSON.parse/
+// JSON.stringify would produce different bytes and always fail the check.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), require('./controllers/gatewayController').webhook);
+
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan('dev'));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
