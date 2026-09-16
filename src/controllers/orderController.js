@@ -216,6 +216,11 @@ exports.updateStatus = async (req, res) => {
     await DeliveryBoy.findByIdAndUpdate(order.assigned, { $inc: { deliveries: 1 } });
   }
 
+  // Populate before emitting - the live socket payload must carry the same
+  // shape as GET /api/orders (assigned = {name, phone}), not a bare
+  // ObjectId, or the customer's live order card renders a blank rider.
+  await order.populate('assigned', 'name phone');
+
   emit.orderStatusChanged(order); // -> customer's order tracker, driver's job list, admin board all update live
   pushDashboardStats();
   res.json(order);
@@ -228,7 +233,7 @@ exports.assign = async (req, res) => {
     req.params.id,
     { assigned: deliveryBoyId, status: 'out' },
     { new: true }
-  );
+  ).populate('assigned', 'name phone'); // same shape as GET /api/orders for the live payload
   if (!order) return res.status(404).json({ error: 'Order not found' });
   emit.orderAssigned(order); // -> pushes the job straight into the delivery boy's live queue
   res.json(order);
@@ -291,7 +296,7 @@ exports.respond = async (req, res) => {
     { _id: req.params.id, status: 'pending_acceptance' },
     { status: 'out', assigned: driverId, acceptedAt: new Date() },
     { new: true }
-  );
+  ).populate('assigned', 'name phone'); // same shape as GET /api/orders for the live payload
 
   if (!won) {
     // Someone else's accept landed first between our read above and now.
