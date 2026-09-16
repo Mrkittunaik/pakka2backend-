@@ -75,6 +75,16 @@ exports.userStatusChanged = (user) => safe(() => {
   getIO().to(`user:${user._id}`).emit('user:status', user); // e.g. blocked mid-session
 });
 
+// A brand new customer account was just created (first OTP verify or first Google sign-in).
+exports.userNew = (user) => safe(() => {
+  getIO().to('admins').emit('user:new', user); // full doc — admin can show name/phone/email immediately
+});
+
+// An existing customer just logged in (OTP verify or Google sign-in on a known account).
+exports.userLoggedIn = (user) => safe(() => {
+  getIO().to('admins').emit('user:login', user);
+});
+
 exports.userUpdated = (user) => safe(() => {
   getIO().to('admins').emit('user:updated', user);
   getIO().to(`user:${user._id}`).emit('user:updated', user); // profile/verify/avatar changed
