@@ -42,7 +42,15 @@ exports.verifyOtp = async (req, res) => {
   await otp.save();
 
   let user = await User.findOne({ phone });
-  if (!user) user = await User.create({ phone, status: 'new' });
+  let isNew = false;
+  if (!user) {
+    user = await User.create({ phone, status: 'new' });
+    isNew = true;
+  }
+
+  const emit = require('../sockets/emit');
+  if (isNew) emit.userNew(user);
+  else emit.userLoggedIn(user);
 
   const token = signToken({ id: user._id, role: 'customer' });
   res.json({ ok: true, token, user });
@@ -76,6 +84,7 @@ exports.googleAuth = async (req, res) => {
   const name = payload.name;
 
   let user = await User.findOne({ googleId });
+  let isNew = false;
   if (!user) {
     // A user may already exist with this email from a previous phone-only
     // signup - link the accounts instead of creating a duplicate.
@@ -86,8 +95,13 @@ exports.googleAuth = async (req, res) => {
       await user.save();
     } else {
       user = await User.create({ googleId, email, name, phone: null, status: 'new' });
+      isNew = true;
     }
   }
+
+  const emit = require('../sockets/emit');
+  if (isNew) emit.userNew(user);
+  else emit.userLoggedIn(user);
 
   const token = signToken({ id: user._id, role: 'customer' });
   res.json({ ok: true, token, user, needsPhone: !user.phone });
@@ -107,6 +121,7 @@ exports.bindPhone = async (req, res) => {
 
   const user = await User.findByIdAndUpdate(req.auth.id, { phone }, { new: true });
   if (!user) return res.status(404).json({ error: 'User not found' });
+  require('../sockets/emit').userUpdated(user); // phone just added to a Google-only account — admin's user list should reflect it live
   res.json({ ok: true, user });
 };
 
