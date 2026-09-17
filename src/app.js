@@ -39,7 +39,14 @@ app.use(cors({
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 300,
+  // 300 was too low for real usage: the admin dashboard alone fires ~13
+  // requests per page load, and polls every 20s when the live socket isn't
+  // connected — that's ~40 requests/min from a single idle tab, enough to
+  // trip a 300/15min cap in under 10 minutes even with no abuse happening.
+  // 2000 gives real traffic (admin + customer webapp + delivery app, several
+  // devices at once) comfortable headroom while still catching genuine abuse.
+  // Override with RATE_LIMIT_MAX env var if you need to tune it further.
+  max: Number(process.env.RATE_LIMIT_MAX) || 2000,
   standardHeaders: true,
   legacyHeaders: false
 });
