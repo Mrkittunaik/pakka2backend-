@@ -1,4 +1,5 @@
 const Subscription = require('../models/Subscription');
+const SubscriptionDelivery = require('../models/SubscriptionDelivery');
 const emit = require('../sockets/emit');
 const { checkCutoff, dateKey } = require('../utils/subscriptionRules');
 
@@ -127,4 +128,66 @@ exports.skipWindow = async (req, res) => {
   if (!s) return res.status(404).json({ error: 'Not found' });
   const check = checkCutoff(date, s.slot);
   res.json(check);
+};
+
+// GET /api/subscriptions/:id/deliveries - bottle-exchange history for one subscription
+exports.getDeliveries = async (req, res) => {
+  const s = await Subscription.findById(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Not found' });
+  if (req.auth.role === 'customer' && String(s.customer) !== String(req.auth.id)) {
+    return res.status(403).json({ error: 'Not your subscription' });
+  }
+  res.json(
+    await SubscriptionDelivery.find({ subscription: req.params.id })
+      .populate('deliveryBoy')
+      .sort({ date: -1 })
+  );
+};
+
+// PATCH /api/subscriptions/:id/assign-delivery-boy  { deliveryBoyId } (admin)
+exports.assignDeliveryBoy = async (req, res) => {
+  const { deliveryBoyId } = req.body;
+  const s = await Subscription.findByIdAndUpdate(
+    req.params.id,
+    { deliveryBoy: deliveryBoyId || null },
+    { new: true }
+  ).populate('plan').populate('deliveryBoy');
+  if (!s) return res.status(404).json({ error: 'Not found' });
+  emit.subscriptionChanged(s);
+  res.json(s);
+};
+
+// POST /api/subscriptions/:id/log-delivery (delivery app, each morning)
+// multipart: newBottlePhoto, oldBottlePhoto; body: { quantityCollected, shortfall }
+// Writes the SubscriptionDelivery row AND updates the parent Subscription's
+// "today" counters in the same call.
+exports.logDelivery = async (req, res) => {
+  const s = await Subscription.findById(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Not found' });
+
+  const quantityCollected = Number(req.body.quantityCollected) || 0;
+  const shortfall = Number(req.body.shortfall) || 0;
+  const files = req.files || {};
+  const newBottlePhoto = files.newBottlePhoto && files.newBottlePhoto[0] ? files.newBottlePhoto[0].path : undefined;
+  const oldBottlePhoto = files.oldBottlePhoto && files.oldBottlePhoto[0] ? files.oldBottlePhoto[0].path : undefined;
+
+  const entry = await SubscriptionDelivery.create({
+    subscription: s._id,
+    deliveryBoy: req.auth.id,
+    newBottlePhoto,
+    oldBottlePhoto,
+    quantityCollected,
+    shortfall
+  });
+
+  s.todayStatus = shortfall > 0 ? 'issue' : 'delivered';
+  s.bottlesGivenToday = Number(req.body.bottlesGiven) || quantityCollected; // one-for-one exchange unless the app says otherwise
+  s.bottlesCollectedToday = quantityCollected;
+  s.pendingBottles = Math.max(0, (s.pendingBottles || 0) + shortfall);
+  await s.save();
+
+  const populated = await s.populate('plan');
+  emit.subscriptionChanged(populated);
+  emit.subscriptionDeliveryLogged(entry);
+  res.status(201).json({ delivery: entry, subscription: populated });
 };
