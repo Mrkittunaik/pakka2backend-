@@ -111,3 +111,22 @@ exports.paymentChanged = (payment) => safe(() => {
 exports.dashboardStats = (stats) => safe(() => {
   getIO().to('admins').emit('dashboard:stats', stats);
 });
+
+// Wallet balance moved (admin adjustment or broken-bottle deduction).
+// payload: { customer, balance, transaction }
+exports.walletChanged = (payload) => safe(() => {
+  getIO().to('admins').emit('wallet:changed', payload);
+  if (payload.customer) getIO().to(`user:${payload.customer}`).emit('wallet:changed', payload);
+});
+
+// A bottle ticket was raised by a delivery boy or resolved by admin.
+exports.bottleTicketChanged = (ticket) => safe(() => {
+  getIO().to('admins').emit('bottleTicket:changed', ticket);
+  const driverId = ticket.deliveryBoy && ticket.deliveryBoy._id ? ticket.deliveryBoy._id : ticket.deliveryBoy;
+  if (driverId) getIO().to(`driver:${driverId}`).emit('bottleTicket:changed', ticket);
+});
+
+// A delivery boy logged a morning bottle-exchange visit on a subscription.
+exports.subscriptionDeliveryLogged = (entry) => safe(() => {
+  getIO().to('admins').emit('subscriptionDelivery:logged', entry);
+});
