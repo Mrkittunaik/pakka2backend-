@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('../controllers/subscriptionController');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const upload = require('../utils/upload');
 
 router.post('/', requireAuth, requireRole('customer'), ctrl.create);
 router.get('/', requireAuth, ctrl.list); // admin: all, customer: own
@@ -10,6 +11,11 @@ router.put('/:id', requireAuth, ctrl.update);
 router.patch('/:id/pause', requireAuth, ctrl.pause);
 router.patch('/:id/resume', requireAuth, ctrl.resume);
 router.patch('/:id/payment-status', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.setPaymentStatus);
+
+// Bottle-exchange delivery log + delivery-boy assignment
+router.get('/:id/deliveries', requireAuth, ctrl.getDeliveries);
+router.patch('/:id/assign-delivery-boy', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.assignDeliveryBoy);
+router.post('/:id/log-delivery', requireAuth, requireRole('delivery'), upload.fields([{ name: 'newBottlePhoto' }, { name: 'oldBottlePhoto' }]), ctrl.logDelivery);
 
 // Skip / unskip a single delivery date, cutoff-verified server-side
 router.get('/:id/skip-window', requireAuth, ctrl.skipWindow);
