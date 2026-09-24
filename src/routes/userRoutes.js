@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('../controllers/userController');
 const authCtrl = require('../controllers/authController');
+const walletCtrl = require('../controllers/walletController');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const upload = require('../utils/upload');
 
@@ -10,6 +11,10 @@ router.get('/me', requireAuth, requireRole('customer'), ctrl.me);
 router.put('/me', requireAuth, requireRole('customer'), ctrl.updateMe);
 router.post('/me/addresses', requireAuth, requireRole('customer'), ctrl.addAddress);
 router.delete('/me/addresses/:addrId', requireAuth, requireRole('customer'), ctrl.removeAddress);
+// Wallet (must sit before the generic '/:id' routes below)
+router.get('/:id/wallet', requireAuth, walletCtrl.getWallet);
+router.get('/:id/wallet/transactions', requireAuth, walletCtrl.getTransactions);
+router.post('/:id/wallet/adjust', requireAuth, requireRole('owner', 'admin', 'manager'), walletCtrl.adjust);
 router.get('/:id/status', authCtrl.userStatus); // matches GET /api/users/:id/status from frontend
 router.get('/:id', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.getOne);
 router.put('/:id', requireAuth, requireRole('owner', 'admin', 'manager'), ctrl.update);
