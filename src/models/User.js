@@ -30,6 +30,7 @@ const userSchema = new mongoose.Schema({
   avatar: { type: String, default: '' },       // /uploads/<file> profile photo
   idProofUrl: { type: String, default: '' },   // /uploads/<file> ID card image, if collected
   ordersCount: { type: Number, default: 0 },
+  walletBalance: { type: Number, default: 0 },
   joinedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
