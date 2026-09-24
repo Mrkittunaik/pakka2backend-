@@ -22,7 +22,15 @@ const subscriptionSchema = new mongoose.Schema({
   // Dates the customer has skipped, e.g. ["2026-09-08"]. Stored as YYYY-MM-DD
   // strings (not Date) so there's no timezone ambiguity about which calendar
   // day was skipped.
-  skippedDates: [{ type: String }]
+  skippedDates: [{ type: String }],
+
+  // --- Bottle-exchange delivery tracking ---
+  deliveryBoy: { type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryBoy', default: null },
+  zone: { type: String, default: '' },
+  todayStatus: { type: String, enum: ['pending', 'delivered', 'issue'], default: 'pending' },
+  bottlesGivenToday: { type: Number, default: 0 },
+  bottlesCollectedToday: { type: Number, default: 0 },
+  pendingBottles: { type: Number, default: 0 } // bottles the customer still owes us
 }, { timestamps: true });
 
 module.exports = mongoose.model('Subscription', subscriptionSchema);
