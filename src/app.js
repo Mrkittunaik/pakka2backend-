@@ -71,6 +71,7 @@ app.use('/api/delivery-boys', require('./routes/deliveryBoyRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/plans', require('./routes/planRoutes'));
 app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));
+app.use('/api/bottle-tickets', require('./routes/bottleTicketRoutes'));
 app.use('/api/coupons', require('./routes/couponRoutes'));
 app.use('/api/banners', require('./routes/bannerRoutes'));
 app.use('/api/categories', require('./routes/categoryRoutes'));
