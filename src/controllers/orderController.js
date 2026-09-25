@@ -72,6 +72,52 @@ async function priceCart(items, couponCode) {
   return { resolvedItems, total, discount, appliedCoupon };
 }
 
+// How long an order stays offered before we stop waiting for a manual
+// accept and auto-assign it ourselves. Kept short since these are
+// short-hop local deliveries - a rider who's actually free will see and
+// tap the offer well within this window.
+const AUTO_ASSIGN_TIMEOUT_MS = 4000;
+
+// Assigns `order` to whichever of `offeredTo` currently has the fewest
+// active orders (status 'out') - the least-busy rider. Ties broken by
+// whoever comes first in the offeredTo list (already nearest-first from
+// findNearbyDeliveryBoys). Uses the same atomic compare-and-swap as a
+// manual accept, so if a rider's own tap wins the race in the meantime,
+// this becomes a no-op instead of double-assigning.
+async function autoAssignToLeastBusyDriver(orderId) {
+  const fresh = await Order.findById(orderId);
+  if (!fresh || fresh.status !== 'pending_acceptance') return; // already accepted/rejected/cancelled - nothing to do
+
+  const candidateIds = fresh.offeredTo.map(String).filter(id => !fresh.rejectedBy.some(r => String(r) === id));
+  if (!candidateIds.length) return; // everyone already rejected - broadcastToNearbyDrivers' own reject-path handles that case
+
+  const counts = await Order.aggregate([
+    { $match: { status: 'out', assigned: { $ne: null } } },
+    { $group: { _id: '$assigned', active: { $sum: 1 } } }
+  ]);
+  const activeCountById = new Map(counts.map(c => [String(c._id), c.active]));
+
+  let chosenId = candidateIds[0];
+  let lowest = activeCountById.get(chosenId) || 0;
+  for (const id of candidateIds.slice(1)) {
+    const n = activeCountById.get(id) || 0;
+    if (n < lowest) { lowest = n; chosenId = id; }
+  }
+
+  const won = await Order.findOneAndUpdate(
+    { _id: orderId, status: 'pending_acceptance' },
+    { status: 'out', assigned: chosenId, acceptedAt: new Date() },
+    { new: true }
+  ).populate('assigned', 'name phone');
+  if (!won) return; // a real accept/reject landed first - no-op
+
+  const others = won.offeredTo.map(String).filter(id => id !== chosenId);
+  emit.orderTakenByOther(won, others);
+  emit.orderAssigned(won);
+  emit.orderStatusChanged(won);
+  pushDashboardStats();
+}
+
 // Shared by exports.create (auto-broadcast) and exports.offer (manual re-broadcast
 // from the admin dashboard, e.g. after everyone rejected the first round).
 async function broadcastToNearbyDrivers(order) {
@@ -90,6 +136,13 @@ async function broadcastToNearbyDrivers(order) {
   order.rejectedBy = [];
   await order.save();
   emit.orderOffered(order, order.offeredTo.map(String));
+
+  setTimeout(() => {
+    autoAssignToLeastBusyDriver(order._id).catch(err => {
+      console.error('[autoAssign] failed for order', order._id, err);
+    });
+  }, AUTO_ASSIGN_TIMEOUT_MS);
+
   return order;
 }
 
